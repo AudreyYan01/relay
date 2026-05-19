@@ -1,0 +1,34 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/services/__pycache__/
+backend/scripts/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Database (generated — rebuild with init_db.py + seed_data.py)
+backend/data/app.db
+
+# Node
+donor-management-mvp/node_modules/
+donor-management-mvp/build/
+
+# macOS
+.DS_Store
+
+# Internal planning and design documents
+*.pdf
+DESIGN_DOCUMENT.md
+DESIGN_DOCUMENT_V2_SIMPLIFIED.md
+DESIGN_DOCUMENT_V2_SIMPLIFIED 2.md
+backend/README.md
+
+# Claude AI working instructions
+donor-management-mvp/CLAUDE.md
+
+# Dev utility scripts (not needed to run the app)
+backend/scripts/check_env.py
+backend/scripts/migrate_v2.py
+
+# Misplaced root-level lock file
+package-lock.json
