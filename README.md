@@ -224,3 +224,4 @@ Relay is designed for small teams, not enterprise scale. These are intentional c
 - **Rollups go stale.** Status and PriorityScore only update when a new transaction is posted — not when time passes or when an engagement is logged.
 - **No pagination.** The supporter list is capped at 100 results.
 - **Brief is rule-based.** The relationship summary won't surface nuance that isn't already in the structured data.
+# relay
