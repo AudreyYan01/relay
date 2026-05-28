@@ -140,7 +140,7 @@ def get_dashboard():
         "SELECT COALESCE(SUM(TotalDonated), 0) FROM Donor"
     ).fetchone()[0]
     followup_needed = conn.execute(
-        "SELECT COUNT(*) FROM Donor WHERE FollowUpStatus = 'NOT_STARTED' AND Status != 'NEW'"
+        "SELECT COUNT(*) FROM Donor WHERE FollowUpStatus = 'NOT_STARTED' AND Status IN ('ACTIVE', 'WARM')"
     ).fetchone()[0]
     high_priority = conn.execute(
         "SELECT COUNT(*) FROM Donor WHERE PriorityScore >= 50"

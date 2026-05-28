@@ -154,3 +154,26 @@ CREATE TABLE IF NOT EXISTS Touchpoint (
 );
 
 CREATE INDEX IF NOT EXISTS idx_touchpoint_donor ON Touchpoint(DonorID);
+
+
+-- =========================
+-- RecommendationLog (suggestion-disposition audit trail)
+-- =========================
+CREATE TABLE IF NOT EXISTS RecommendationLog (
+  LogID        TEXT PRIMARY KEY,
+  DonorID      TEXT NOT NULL,
+  SuggestedAction TEXT NOT NULL,
+  ActionType   TEXT NOT NULL,
+  RuleVersion  TEXT NOT NULL DEFAULT 'v1',
+  InputSnapshot TEXT,                         -- JSON blob of inputs at generation time
+  Disposition  TEXT
+    CHECK (Disposition IN ('accepted','edited','dismissed','deferred') OR Disposition IS NULL),
+  Rationale    TEXT,
+  EditedAction TEXT,                          -- operator-edited text, if disposition = 'edited'
+  CreatedAt    TEXT NOT NULL DEFAULT (datetime('now')),
+  DisposedAt   TEXT,
+
+  FOREIGN KEY (DonorID) REFERENCES Donor(DonorID) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_reclog_donor ON RecommendationLog(DonorID, CreatedAt);
