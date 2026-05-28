@@ -40,4 +40,9 @@ export const api = {
       body: JSON.stringify({ status }),
     }),
   getEvents: () => request('/events'),
+  recordDisposition: (donorId, logId, disposition, rationale = null, editedAction = null) =>
+    request(`/donors/${donorId}/recommendation/${logId}/disposition`, {
+      method: 'POST',
+      body: JSON.stringify({ disposition, rationale, edited_action: editedAction }),
+    }),
 };

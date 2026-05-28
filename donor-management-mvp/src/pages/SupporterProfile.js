@@ -21,18 +21,38 @@ const FOLLOWUP_STATES = ['NOT_STARTED', 'PLANNED', 'COMPLETED'];
 const TIER_RANGES = { BRONZE: 'Under $100', SILVER: '$100–$499', GOLD: '$500–$1,999', PLATINUM: '$2,000+' };
 const PRIORITY_FORMULA = 'Tier pts (BRONZE 5, SILVER 20, GOLD 35, PLATINUM 40) + Recency pts (30 max, −1 per 5 days idle) + Engagement pts (6 per completed event, max 30)';
 
+const DISP_LABELS = {
+  accepted: '✓ Accepted — follow-up marked as Planned',
+  edited:   '✓ Accepted with edits — follow-up marked as Planned',
+  dismissed: '✗ Dismissed — reload the profile for an alternative suggestion',
+  deferred:  '⏱ Deferred',
+};
+
 function BriefPanel({ donorId, donorEmail }) {
   const [brief, setBrief] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [logId, setLogId] = useState(null);
+  const [disposition, setDisposition] = useState(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editText, setEditText] = useState('');
+  const [disposing, setDisposing] = useState(false);
 
   useEffect(() => {
-    api.getDonorBrief(donorId).then(setBrief).catch(() => {});
+    api.getDonorBrief(donorId)
+      .then((data) => {
+        setBrief(data);
+        setLogId(data.log_id || null);
+        setEditText(data.next_action || '');
+      })
+      .catch(() => {});
   }, [donorId]);
 
   if (!brief) return null;
 
+  const displayedAction = disposition === 'edited' ? editText : brief.next_action;
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(brief.next_action).then(() => {
+    navigator.clipboard.writeText(displayedAction).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -41,6 +61,19 @@ function BriefPanel({ donorId, donorEmail }) {
   const mailtoHref = donorEmail
     ? `mailto:${donorEmail}?subject=Following%20up&body=${encodeURIComponent(brief.next_action)}`
     : null;
+
+  const handleDispose = (d, editedAction) => {
+    if (!logId || disposing) return;
+    setDisposing(true);
+    api.recordDisposition(donorId, logId, d, null, editedAction || null)
+      .then(() => {
+        setDisposition(d);
+        if (d === 'edited' && editedAction) setEditText(editedAction);
+        setDisposing(false);
+        setEditMode(false);
+      })
+      .catch(() => setDisposing(false));
+  };
 
   return (
     <div className="brief-panel">
@@ -69,16 +102,70 @@ function BriefPanel({ donorId, donorEmail }) {
       <div className="brief-field">
         <label>Suggested Next Action</label>
         <div className="next-action-card">
-          <p>{brief.next_action}</p>
+          <p style={disposition === 'dismissed' ? { color: '#a0aec0' } : undefined}>
+            {displayedAction}
+          </p>
         </div>
-        <div className="brief-actions">
-          <button className="brief-action-btn" onClick={handleCopy}>
-            {copied ? '✓ Copied' : 'Copy message'}
-          </button>
-          {mailtoHref && (
-            <a className="brief-action-btn" href={mailtoHref}>Open email draft</a>
-          )}
-        </div>
+
+        {!disposition && !editMode && (
+          <>
+            <div className="brief-actions">
+              <button className="brief-action-btn" onClick={handleCopy}>
+                {copied ? '✓ Copied' : 'Copy message'}
+              </button>
+              {mailtoHref && (
+                <a className="brief-action-btn" href={mailtoHref}>Open email draft</a>
+              )}
+            </div>
+            {logId && (
+              <div className="disposition-row">
+                <button className="disp-btn disp-accept" onClick={() => handleDispose('accepted')} disabled={disposing}>
+                  ✓ Accept
+                </button>
+                <button className="disp-btn disp-edit" onClick={() => setEditMode(true)} disabled={disposing}>
+                  ✎ Edit
+                </button>
+                <button className="disp-btn disp-dismiss" onClick={() => handleDispose('dismissed')} disabled={disposing}>
+                  ✗ Dismiss
+                </button>
+                <button className="disp-btn disp-defer" onClick={() => handleDispose('deferred')} disabled={disposing}>
+                  ⏱ Defer
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {!disposition && editMode && (
+          <div>
+            <textarea
+              className="edit-action-textarea"
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              rows={3}
+            />
+            <div className="brief-actions">
+              <button
+                className="brief-action-btn"
+                onClick={() => handleDispose('edited', editText)}
+                disabled={!editText.trim() || disposing}
+              >
+                {disposing ? 'Saving…' : 'Save & Accept'}
+              </button>
+              <button
+                className="brief-action-btn"
+                style={{ borderColor: '#e2e8f0', color: '#718096' }}
+                onClick={() => { setEditMode(false); setEditText(brief.next_action); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {disposition && (
+          <div className="disposition-badge">{DISP_LABELS[disposition]}</div>
+        )}
       </div>
     </div>
   );

@@ -14,6 +14,36 @@ from services.brief import generate_brief
 
 app = FastAPI()
 
+
+@app.on_event("startup")
+def _ensure_schema():
+    conn = get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS RecommendationLog (
+            LogID        TEXT PRIMARY KEY,
+            DonorID      TEXT NOT NULL,
+            SuggestedAction TEXT NOT NULL,
+            ActionType   TEXT NOT NULL,
+            RuleVersion  TEXT NOT NULL DEFAULT 'v1',
+            InputSnapshot TEXT,
+            Disposition  TEXT CHECK (
+                Disposition IN ('accepted','edited','dismissed','deferred')
+                OR Disposition IS NULL
+            ),
+            Rationale    TEXT,
+            EditedAction TEXT,
+            CreatedAt    TEXT NOT NULL DEFAULT (datetime('now')),
+            DisposedAt   TEXT,
+            FOREIGN KEY (DonorID) REFERENCES Donor(DonorID) ON DELETE CASCADE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reclog_donor ON RecommendationLog(DonorID, CreatedAt)"
+    )
+    conn.commit()
+    conn.close()
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -283,9 +313,44 @@ def get_donor_brief(donor_id: str):
         (donor_id,),
     ).fetchall()
 
+    # Action types the user dismissed in the last 60 days → skip in this recommendation.
+    dismissed_rows = conn.execute(
+        """
+        SELECT DISTINCT ActionType FROM RecommendationLog
+        WHERE DonorID = ?
+          AND Disposition = 'dismissed'
+          AND DisposedAt >= datetime('now', '-60 days')
+        """,
+        (donor_id,),
+    ).fetchall()
+    dismissed_action_types = {row[0] for row in dismissed_rows}
+
+    brief = generate_brief(
+        dict(donor),
+        [dict(r) for r in transactions],
+        [dict(r) for r in engagements],
+        dismissed_action_types,
+    )
+
+    log_id = str(uuid.uuid4())
+    conn.execute(
+        """
+        INSERT INTO RecommendationLog (LogID, DonorID, SuggestedAction, ActionType, RuleVersion, InputSnapshot)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (log_id, donor_id, brief["next_action"], brief["action_type"], brief["rule_version"], brief["input_snapshot"]),
+    )
+    conn.commit()
     conn.close()
 
-    return generate_brief(dict(donor), [dict(r) for r in transactions], [dict(r) for r in engagements])
+    return {
+        "summary": brief["summary"],
+        "why_matters": brief["why_matters"],
+        "recent_signal": brief["recent_signal"],
+        "risk_flag": brief["risk_flag"],
+        "next_action": brief["next_action"],
+        "log_id": log_id,
+    }
 
 
 class FollowUpUpdate(BaseModel):
@@ -310,6 +375,51 @@ def update_followup(donor_id: str, payload: FollowUpUpdate):
     ).fetchone()
     conn.close()
     return dict(updated)
+
+
+class DispositionCreate(BaseModel):
+    disposition: Literal["accepted", "edited", "dismissed", "deferred"]
+    rationale: Optional[str] = None
+    edited_action: Optional[str] = None
+
+
+@app.post("/donors/{donor_id}/recommendation/{log_id}/disposition")
+def record_disposition(donor_id: str, log_id: str, payload: DispositionCreate):
+    conn = get_conn()
+
+    log = conn.execute(
+        "SELECT LogID FROM RecommendationLog WHERE LogID = ? AND DonorID = ?",
+        (log_id, donor_id),
+    ).fetchone()
+    if log is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Recommendation log not found")
+
+    conn.execute(
+        """
+        UPDATE RecommendationLog
+        SET Disposition = ?, Rationale = ?, EditedAction = ?, DisposedAt = datetime('now')
+        WHERE LogID = ?
+        """,
+        (payload.disposition, payload.rationale, payload.edited_action, log_id),
+    )
+
+    # Accepting a suggestion signals intent to act → move follow-up to PLANNED.
+    if payload.disposition in ("accepted", "edited"):
+        conn.execute(
+            """UPDATE Donor
+               SET FollowUpStatus = 'PLANNED', UpdatedAt = datetime('now')
+               WHERE DonorID = ? AND FollowUpStatus = 'NOT_STARTED'""",
+            (donor_id,),
+        )
+
+    conn.commit()
+    result = conn.execute(
+        "SELECT LogID, Disposition, Rationale, EditedAction, DisposedAt FROM RecommendationLog WHERE LogID = ?",
+        (log_id,),
+    ).fetchone()
+    conn.close()
+    return dict(result)
 
 
 class TouchpointCreate(BaseModel):
@@ -349,11 +459,22 @@ def override_status(donor_id: str, payload: StatusOverrideUpdate):
         conn.close()
         raise HTTPException(status_code=404, detail="Donor not found")
 
-    conn.execute(
-        "UPDATE Donor SET StatusOverride = ?, UpdatedAt = datetime('now') WHERE DonorID = ?",
-        (payload.status, donor_id),
-    )
-    conn.commit()
+    if payload.status is not None:
+        # Apply override immediately to both columns so Status is always the effective status.
+        conn.execute(
+            "UPDATE Donor SET StatusOverride = ?, Status = ?, UpdatedAt = datetime('now') WHERE DonorID = ?",
+            (payload.status, payload.status, donor_id),
+        )
+        conn.commit()
+    else:
+        # Clear override and recompute Status from donation/activity recency.
+        conn.execute(
+            "UPDATE Donor SET StatusOverride = NULL, UpdatedAt = datetime('now') WHERE DonorID = ?",
+            (donor_id,),
+        )
+        recompute_donor_rollups(conn, donor_id)
+        conn.commit()
+
     updated = conn.execute(
         "SELECT DonorID, FullName, Status, StatusOverride FROM Donor WHERE DonorID = ?", (donor_id,)
     ).fetchone()
@@ -364,6 +485,8 @@ def override_status(donor_id: str, payload: StatusOverrideUpdate):
 @app.get("/events")
 def get_events():
     conn = get_conn()
+    # Correlated subqueries avoid the Cartesian product that inflated revenue
+    # when an activity has both multiple DonorActivity rows and multiple Transactions.
     rows = conn.execute(
         """
         SELECT
@@ -372,13 +495,20 @@ def get_events():
             a.ActivityStartTime,
             a.ActivityEndTime,
             a.ListPrice,
-            COUNT(DISTINCT CASE WHEN da.EngagementStatus = 'COMPLETED' THEN da.DonorID END) AS attendee_count,
-            COALESCE(SUM(CASE WHEN t.PaymentStatus = 'SUCCESS' THEN t.TransactionAmount ELSE 0 END), 0) AS total_revenue
+            (
+                SELECT COUNT(DISTINCT da.DonorID)
+                FROM DonorActivity da
+                WHERE da.ActivityID = a.ActivityID
+                  AND da.EngagementStatus = 'COMPLETED'
+            ) AS attendee_count,
+            (
+                SELECT COALESCE(SUM(t.TransactionAmount), 0)
+                FROM "Transaction" t
+                WHERE t.ActivityID = a.ActivityID
+                  AND t.PaymentStatus = 'SUCCESS'
+            ) AS total_revenue
         FROM Activity a
-        LEFT JOIN DonorActivity da ON da.ActivityID = a.ActivityID
-        LEFT JOIN "Transaction" t ON t.ActivityID = a.ActivityID
-        GROUP BY a.ActivityID
-        ORDER BY a.ActivityStartTime DESC
+        ORDER BY a.ActivityStartTime DESC NULLS LAST
         """
     ).fetchall()
     conn.close()

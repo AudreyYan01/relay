@@ -300,6 +300,54 @@ tbody tr:last-child { border-bottom: none; }
 .export-btn:hover:not(:disabled) { border-color: #6c63ff; color: #6c63ff; }
 .export-btn:disabled { opacity: .4; cursor: default; }
 
+/* ── Disposition buttons ── */
+.disposition-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.disp-btn {
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1.5px solid;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #fff;
+  transition: background .15s;
+}
+.disp-btn:disabled { opacity: .5; cursor: default; }
+.disp-accept  { border-color: #68d391; color: #276749; }
+.disp-accept:hover:not(:disabled)  { background: #c6f6d5; }
+.disp-edit    { border-color: #63b3ed; color: #2a4365; }
+.disp-edit:hover:not(:disabled)    { background: #bee3f8; }
+.disp-dismiss { border-color: #fc8181; color: #822727; }
+.disp-dismiss:hover:not(:disabled) { background: #fed7d7; }
+.disp-defer   { border-color: #f6ad55; color: #744210; }
+.disp-defer:hover:not(:disabled)   { background: #fefcbf; }
+
+/* ── Edit action textarea ── */
+.edit-action-textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #9f7aea;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  margin-top: 8px;
+  display: block;
+}
+.edit-action-textarea:focus { border-color: #6c63ff; }
+
+/* ── Disposition confirmation badge ── */
+.disposition-badge {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #f7f8fc;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4a5568;
+}
+
 /* ── Misc ── */
 .loading { padding: 60px; text-align: center; color: #a0aec0; font-size: 15px; }
 .error   { padding: 40px; text-align: center; color: #e53e3e; }
